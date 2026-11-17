@@ -8,13 +8,13 @@ server:
 spring:
   shardingsphere:
     datasource:
-      names: picture
+      names: yu_picture
       yu_picture:
         type: com.zaxxer.hikari.HikariDataSource
         driver-class-name: com.mysql.cj.jdbc.Driver
         url: jdbc:mysql://localhost:3306/yu_picture
         username: root
-        password: xxxx
+        password: ${DB_PASSWORD}
     rules:
       sharding:
         tables:
@@ -40,6 +40,25 @@ spring:
     host: 127.0.0.1
     port: 6379
     timeout: 5000
+  # RabbitMQ：图片浏览量异步削峰
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5672
+    username: guest
+    password: guest
+    virtual-host: /
+    # 消费者连接工厂
+    listener:
+      simple:
+        acknowledge-mode: manual   # 手动 ack
+        prefetch: 200              # 预取数量
+        concurrency: 4             # 消费者线程数
+        max-concurrency: 8
+        default-requeue-rejected: false  # 消费异常不重新入队
+    publisher:
+      # 发送确认，这里不开启（浏览量丢一条可接受，不做 confirm 回调）
+      confirm-type: none
+      returns: false
   application:
     name: yu-picture-backend
   servlet:
@@ -51,7 +70,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/yu_picture
     username: root
-    password: xxx
+    password: ${DB_PASSWORD}
 
 mybatis-plus:
   configuration:
@@ -76,14 +95,18 @@ knife4j:
         api-rule: package
         api-rule-resources:
           - com.hhk.picturebacked.controller
-# 对象存储配置（需要从腾讯云获取）
+# 对象存储配置（腾讯云 COS，凭证从环境变量注入）
 cos:
   client:
-    host: https://xxx.myqcloud.com
+    host: ${COS_HOST:https://hhk-picture-1410200370.cos.ap-guangzhou.myqcloud.com}
     secretId: ${SECRETID}
     secretKey: ${SECRETKEY}
     region: ${REGION}
-    bucket: xxx
-# 阿里云 AI 配置
+    bucket: ${COS_BUCKET:hhk-picture-1410200370}
+# 阿里云百炼（DashScope）AI 配置
+# 注意：这里必须用 API_KEY（百炼的 sk- 开头），不是 COS 的 SECRETKEY
 aliYunAi:
-  apiKey: ${SECRETKEY}
+  apiKey: ${API_KEY:${SECRETKEY}}
+  # 模拟模式：不真正调用百炼，直接把原图当渲染结果。
+  # 仅用于本地联调/阿里云欠费时的链路自测，生产务必保持 false。
+  mock: ${ALIYUN_AI_MOCK:false}

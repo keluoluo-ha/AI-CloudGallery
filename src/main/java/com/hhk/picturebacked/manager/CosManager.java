@@ -39,7 +39,10 @@ public class CosManager {
         picOperations.setIsPicInfo(1);
         List<PicOperations.Rule> ruleList = new ArrayList<>();
 
-        // 1. 转 webp （必选，保留完整目录路径）
+        // 1. 转 webp
+        // 注意：PicOperations.Rule.fileId 是相对于「源对象所在目录」的路径，
+        //      不能带目录前缀，否则 COS 会拼成 目录/目录/xxx.webp（路径重复）。
+        //      这里只取文件名，产物就落在源对象同目录下。
         String webpKey = toWebpKey(objectKey);
         PicOperations.Rule webpRule = new PicOperations.Rule();
         webpRule.setBucket(cosClientConfig.getBucket());
@@ -49,7 +52,7 @@ public class CosManager {
 
         // 2. 生成缩略图 （只有文件>2KB才生成）
         if (file.length() > 2 * 1024) {
-            String thumbnailKey = toWebpKey(objectKey).replace(".webp", "_thumbnail.webp");
+            String thumbnailKey = webpKey.replace(".webp", "_thumbnail.webp");
             PicOperations.Rule thumbnailRule = new PicOperations.Rule();
             thumbnailRule.setBucket(cosClientConfig.getBucket());
             thumbnailRule.setFileId(thumbnailKey);
@@ -82,14 +85,24 @@ public class CosManager {
     }
 
     /**
-     * 将对象 key 转为同路径的 webp key
+     * 将对象 key 转为同目录下的 webp 文件名
+     * <p>
+     * PicOperations.Rule.fileId 只接受文件名（不含目录），
+     * COS 会自动把它放到源对象所在的目录下。
+     * </p>
      */
     private static String toWebpKey(String key) {
         String cleanKey = cn.hutool.core.util.StrUtil.removePrefix(key, "/");
-        int dotIndex = cleanKey.lastIndexOf('.');
-        if (dotIndex > 0) {
-            return cleanKey.substring(0, dotIndex) + ".webp";
+        // 只保留文件名部分
+        String fileName = cleanKey;
+        int slashIndex = cleanKey.lastIndexOf('/');
+        if (slashIndex >= 0) {
+            fileName = cleanKey.substring(slashIndex + 1);
         }
-        return cleanKey + ".webp";
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex > 0) {
+            return fileName.substring(0, dotIndex) + ".webp";
+        }
+        return fileName + ".webp";
     }
 }
