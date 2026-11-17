@@ -42,6 +42,16 @@ public interface PictureService extends IService<Picture> {
      void checkPictureAuth(User loginUser, Picture picture);
 
     /**
+     * AI 产物上传：强制走待审核，不允许自动过审
+     *
+     * @param imageUrl             AI 返回的图片地址
+     * @param pictureUploadRequest 上传参数
+     * @param loginUser            提交用户
+     * @return 落库后的图片
+     */
+    Picture uploadAiResultPicture(String imageUrl, PictureUploadRequest pictureUploadRequest, User loginUser);
+
+    /**
      * 查询wrapper
      * @param request
      * @return

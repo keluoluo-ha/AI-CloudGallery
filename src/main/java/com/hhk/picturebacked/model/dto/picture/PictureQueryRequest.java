@@ -110,5 +110,26 @@ public class PictureQueryRequest extends PageRequest implements Serializable {
      * 结束编辑时间
      */
     private Date endEditTime;
-    private static final long serialVersionUID = 1L;  
+
+    /**
+     * 归属商品 id（SKU），为空表示不按商品过滤
+     */
+    private Long productId;
+
+    /**
+     * 素材类型：MAIN / DETAIL / SCENE / WHITE / DETAIL_LONG
+     */
+    private String assetType;
+
+    /**
+     * 目标平台：AMAZON / SHOPEE / TIKTOK / TEMU / COMMON
+     */
+    private String platform;
+
+    /**
+     * 来源原图 id
+     */
+    private Long sourceId;
+
+    private static final long serialVersionUID = 1L;
 }

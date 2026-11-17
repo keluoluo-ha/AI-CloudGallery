@@ -107,6 +107,50 @@ public class PictureVO implements Serializable {
      */
     private String picColor;
     /**
+     * 浏览量
+     */
+    private Long viewCount;
+    /**
+     * 归属商品 id（SKU）
+     */
+    private Long productId;
+    /**
+     * 素材类型：MAIN / DETAIL / SCENE / WHITE / DETAIL_LONG
+     */
+    private String assetType;
+    /**
+     * 目标平台：AMAZON / SHOPEE / TIKTOK / TEMU / COMMON
+     */
+    private String platform;
+    /**
+     * 来源原图 id
+     */
+    private Long sourceId;
+    /**
+     * 语言：zh / en
+     */
+    private String lang;
+    /**
+     * 审核状态：0-待审核 1-通过 2-驳回
+     * <p>
+     * 电商场景下 AI 产物默认落在待审核，必须经人审才能上架，
+     * 所以前端需要能直接读到这个状态做卡点。
+     * </p>
+     */
+    private Integer reviewStatus;
+    /**
+     * 审核备注
+     */
+    private String reviewMessage;
+    /**
+     * 审核人 id
+     */
+    private Long reviewerId;
+    /**
+     * 审核时间
+     */
+    private Date reviewTime;
+    /**
      * 权限列表
      */
     private List<String> permissionList = new ArrayList<>();

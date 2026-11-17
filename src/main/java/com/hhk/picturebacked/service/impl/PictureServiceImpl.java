@@ -22,6 +22,7 @@ import com.hhk.picturebacked.manager.upload.PictureUploadResouse;
 import com.hhk.picturebacked.manager.upload.URLPictureUploadResouseImpl;
 import com.hhk.picturebacked.model.dto.picture.*;
 import com.hhk.picturebacked.model.entity.Picture;
+import com.hhk.picturebacked.model.entity.Product;
 import com.hhk.picturebacked.model.entity.Space;
 import com.hhk.picturebacked.model.entity.User;
 import com.hhk.picturebacked.model.enums.PictureReviewStatusEnum;
@@ -29,6 +30,7 @@ import com.hhk.picturebacked.model.vo.PictureVO;
 import com.hhk.picturebacked.model.vo.UserVO;
 import com.hhk.picturebacked.service.PictureService;
 import com.hhk.picturebacked.mapper.PictureMapper;
+import com.hhk.picturebacked.service.ProductService;
 import com.hhk.picturebacked.service.SpaceService;
 import com.hhk.picturebacked.service.UserService;
 import com.hhk.picturebacked.config.CosClientConfig;
@@ -40,6 +42,7 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -79,6 +82,25 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     private AliYunAiApi aliYunAiApi;
     @Resource
     private CosClientConfig cosClientConfig;
+    @Resource
+    @Lazy
+    private ProductService productService;
+
+
+    /**
+     * 获取商品所属空间 id，用于校验图片与商品是否属于同一空间
+     */
+    private Long getProductSpaceId(Long productId) {
+        if (productId == null || productId <= 0) {
+            return null;
+        }
+        try {
+            Product product = productService.getById(productId);
+            return product == null ? null : product.getSpaceId();
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
 
     @Override
@@ -212,17 +234,28 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         }
 
         // 上传路径
+        // AI 产物单独放在 ai/ 子目录，方便区分原图与衍生图
+        boolean isAiResult = pictureUploadRequest != null
+                && URLPictureUploadResouseImpl.UPLOAD_FLAG_AI.equals(pictureUploadRequest.getUploadFlag());
         String uploadPathPrefix;
         if (spaceId == null || spaceId == 0) {
             uploadPathPrefix = String.format("public/%s", loginUser.getId());
         } else {
             uploadPathPrefix = String.format("space/%s", spaceId);
         }
+        if (isAiResult) {
+            uploadPathPrefix = uploadPathPrefix + "/ai";
+        }
 
         // 选择上传模板
         PictureUploadResouse picturetemplate = filePictureUploadResouse;
         if (inputResourse instanceof String) {
             picturetemplate = urlPictureUploadResouse;
+            // AI 产物放宽体积限制
+            if (pictureUploadRequest != null
+                    && URLPictureUploadResouseImpl.UPLOAD_FLAG_AI.equals(pictureUploadRequest.getUploadFlag())) {
+                urlPictureUploadResouse.validPicture(inputResourse, true);
+            }
         }
 
         // 执行上传
@@ -250,6 +283,46 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         picture.setPicScale(uploadPictureResult.getPicScale());
         picture.setPicFormat(uploadPictureResult.getPicFormat());
         picture.setPicColor(uploadPictureResult.getPicColor());
+
+        // ==================== 电商素材绑定 ====================
+        // productId / assetType / platform / lang
+        Long productId = null;
+        String assetType = null;
+        String platform = null;
+        String lang = null;
+        if (pictureUploadRequest != null) {
+            productId = pictureUploadRequest.getProductId();
+            assetType = pictureUploadRequest.getAssetType();
+            platform = pictureUploadRequest.getPlatform();
+            lang = pictureUploadRequest.getLang();
+        }
+        // 更新图片时未传则沿用旧值，避免编辑一次就把素材归属清空
+        if (pictureId != null && oldPicture != null) {
+            if (productId == null) {
+                productId = oldPicture.getProductId();
+            }
+            if (StrUtil.isBlank(assetType)) {
+                assetType = oldPicture.getAssetType();
+            }
+            if (StrUtil.isBlank(platform)) {
+                platform = oldPicture.getPlatform();
+            }
+            if (StrUtil.isBlank(lang)) {
+                lang = oldPicture.getLang();
+            }
+        }
+        // 校验商品归属：商品必须属于同一空间，避免跨店串图
+        Long finalSpaceIdForProduct = spaceId == null ? 0L : spaceId;
+        if (productId != null && productId > 0) {
+            Long productSpaceId = getProductSpaceId(productId);
+            ThrowUtils.throwIf(productSpaceId == null, ErrorCode.NOT_FOUND_ERROR, "商品不存在");
+            ThrowUtils.throwIf(!productSpaceId.equals(finalSpaceIdForProduct),
+                    ErrorCode.PARAMS_ERROR, "商品与图片不属于同一空间");
+        }
+        picture.setProductId(productId);
+        picture.setAssetType(assetType);
+        picture.setPlatform(platform);
+        picture.setLang(lang);
 
         // 审核信息
         this.fillReviewParams(picture, loginUser);
@@ -297,6 +370,46 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
 
         return PictureVO.objToVo(picture);
     }
+    /**
+     * AI 产物上传
+     * <p>
+     * 与普通上传的区别：
+     * 1. 强制走待审核，AI 图不允许直接过审（即使提交人是管理员），
+     *    因为 AI 生成可能带 Logo / 侵权元素 / 非纯白底，平台封店成本太高；
+     * 2. 体积上限放宽到 10MB，AI 输出高清图可能超过普通 URL 上传的 2MB 限制；
+     * 3. 上传路径固定走 AI 目录，便于区分和清理。
+     * </p>
+     *
+     * @param imageUrl           AI 返回的图片地址
+     * @param pictureUploadRequest 上传参数（空间、商品、素材类型等）
+     * @param loginUser          提交用户
+     * @return 落库后的图片
+     */
+    @Override
+    public Picture uploadAiResultPicture(String imageUrl, PictureUploadRequest pictureUploadRequest, User loginUser) {
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NO_AUTH_ERROR);
+        ThrowUtils.throwIf(StrUtil.isBlank(imageUrl), ErrorCode.PARAMS_ERROR, "图片地址不能为空");
+
+        // 复用通用上传流程落库
+        com.hhk.picturebacked.model.vo.PictureVO pictureVO =
+                this.uploadPicture(imageUrl, pictureUploadRequest, loginUser);
+        Picture saved = this.getById(pictureVO.getId());
+        if (saved == null) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "AI 产物保存失败");
+        }
+        // 强制置为待审核，覆盖管理员自动过审的逻辑
+        Picture review = new Picture();
+        review.setId(saved.getId());
+        review.setReviewStatus(PictureReviewStatusEnum.REVIEWING.getValue());
+        review.setReviewMessage("AI 生成素材，需人工审核");
+        review.setReviewerId(null);
+        review.setReviewTime(null);
+        this.updateById(review);
+        saved.setReviewStatus(PictureReviewStatusEnum.REVIEWING.getValue());
+        saved.setReviewMessage("AI 生成素材，需人工审核");
+        return saved;
+    }
+
     @Override
     public void checkPictureAuth(User loginUser, Picture picture) {
         Long spaceId = picture.getSpaceId();
@@ -341,6 +454,11 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         Long spaceId = request.getSpaceId();
         Long reviewerId = request.getReviewerId();
         boolean nullSpaceId = request.isNullSpaceId();
+        // 电商素材绑定条件
+        Long productId = request.getProductId();
+        String assetType = request.getAssetType();
+        String platform = request.getPlatform();
+        Long sourceId = request.getSourceId();
 
         if (StrUtil.isNotBlank(searchText)) {
             queryWrapper.and(qw -> qw.like("name", searchText)
@@ -367,6 +485,11 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         queryWrapper.eq(ObjUtil.isNotEmpty(reviewStatus), "reviewStatus", reviewStatus);
         queryWrapper.eq(StrUtil.isNotBlank(reviewMessage), "reviewMessage", reviewMessage);
         queryWrapper.eq(ObjUtil.isNotEmpty(reviewerId), "reviewerId", reviewerId);
+        // 电商素材绑定条件
+        queryWrapper.eq(ObjUtil.isNotEmpty(productId), "productId", productId);
+        queryWrapper.eq(StrUtil.isNotBlank(assetType), "assetType", assetType);
+        queryWrapper.eq(StrUtil.isNotBlank(platform), "platform", platform);
+        queryWrapper.eq(ObjUtil.isNotEmpty(sourceId), "sourceId", sourceId);
 
 
         // JSON 数组查询
@@ -530,6 +653,14 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         //只有本人或者管理员可以修改
         if(!Objects.equals(oldPicture.getUserId(),loginUser.getId()) &&!userService.isAdmin(loginUser)){
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
+        }
+        // 电商素材绑定：商品必须与图片属于同一空间，避免跨店串图
+        if (picture.getProductId() != null && picture.getProductId() > 0) {
+            Long productSpaceId = getProductSpaceId(picture.getProductId());
+            ThrowUtils.throwIf(productSpaceId == null, ErrorCode.NOT_FOUND_ERROR, "商品不存在");
+            Long pictureSpaceId = oldPicture.getSpaceId() == null ? 0L : oldPicture.getSpaceId();
+            ThrowUtils.throwIf(!productSpaceId.equals(pictureSpaceId),
+                    ErrorCode.PARAMS_ERROR, "商品与图片不属于同一空间");
         }
         //补充审核参数
         this.fillReviewParams(picture,loginUser);

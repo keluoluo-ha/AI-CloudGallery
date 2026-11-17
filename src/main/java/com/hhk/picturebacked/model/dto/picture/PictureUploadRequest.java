@@ -27,5 +27,31 @@ public class PictureUploadRequest implements Serializable {
      */
     private Long spaceId;
 
-    private static final long serialVersionUID = 1L;  
+    /**
+     * 归属商品 id（SKU），为空表示未绑定
+     */
+    private Long productId;
+
+    /**
+     * 素材类型：MAIN / DETAIL / SCENE / WHITE / DETAIL_LONG
+     */
+    private String assetType;
+
+    /**
+     * 目标平台：AMAZON / SHOPEE / TIKTOK / TEMU / COMMON
+     */
+    private String platform;
+
+    /**
+     * 语言：zh / en
+     */
+    private String lang;
+
+    /**
+     * 上传标记，内部使用
+     * 传 ai 表示走 AI 产物上传策略（体积上限放宽到 10MB）
+     */
+    private String uploadFlag;
+
+    private static final long serialVersionUID = 1L;
 }

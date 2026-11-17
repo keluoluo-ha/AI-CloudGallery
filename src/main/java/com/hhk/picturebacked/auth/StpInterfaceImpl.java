@@ -54,6 +54,10 @@ public class StpInterfaceImpl implements StpInterface {
     @Lazy
     public SpaceUserService spaceUserService;
 
+    @Resource
+    @Lazy
+    public com.hhk.picturebacked.service.ProductService productService;
+
     @Value("${server.servlet.context-path}")
     private String contextPath;
 
@@ -217,11 +221,37 @@ public class StpInterfaceImpl implements StpInterface {
                 case "space":
                     spaceUserAuthContext.setSpaceId(id);
                     break;
+                case "product":
+                    // 商品接口的鉴权上下文按空间维度走：
+                    // 1. 请求体里直接带 spaceId 的（add/list），已在上面的 JSON 解析中填好
+                    // 2. 只带 id 的（get/edit/delete），这里的 id 是商品 id，需要反查所属空间
+                    if (spaceUserAuthContext.getSpaceId() == null) {
+                        spaceUserAuthContext.setSpaceId(getProductSpaceId(id));
+                    }
+                    break;
                 default:
             }
         }
 
         return spaceUserAuthContext;
+    }
+
+    /**
+     * 根据商品 id 反查所属空间 id，用于商品接口的空间级鉴权
+     *
+     * @param productId 商品 id
+     * @return 所属空间 id，查不到返回 null
+     */
+    private Long getProductSpaceId(Long productId) {
+        if (productId == null || productId <= 0) {
+            return null;
+        }
+        try {
+            com.hhk.picturebacked.model.entity.Product product = productService.getById(productId);
+            return product == null ? null : product.getSpaceId();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
 

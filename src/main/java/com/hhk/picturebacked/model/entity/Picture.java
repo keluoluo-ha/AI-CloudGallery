@@ -126,9 +126,43 @@ public class Picture implements Serializable {
     private Long spaceId;
 
     /**
+     * 归属商品 id（SKU），为空表示未绑定商品
+     * 注意：picture 按 spaceId 动态分表，查询时必须带上 spaceId，避免全分片扫描
+     */
+    private Long productId;
+
+    /**
+     * 素材类型：MAIN-主图 DETAIL-细节 SCENE-场景 WHITE-白底 DETAIL_LONG-长图
+     */
+    private String assetType;
+
+    /**
+     * 目标平台：AMAZON SHOPEE TIKTOK TEMU COMMON
+     */
+    private String platform;
+
+    /**
+     * 来源原图 id，衍生图（AI 生成、平台规格图）指向原图
+     */
+    private Long sourceId;
+
+    /**
+     * 语言：zh en
+     */
+    private String lang;
+
+    /**
      * 图片主色调
      */
     private String picColor;
+
+    /**
+     * 浏览量（由定时任务批量刷库写入）
+     * 注意：本项目 mybatis-plus 关闭了下划线转驼峰（map-underscore-to-camel-case: false），
+     * 这里显式指定列名，否则字段映射不上
+     */
+    @TableField("view_count")
+    private Long viewCount;
 
     @TableField(exist = false)
     private static final long serialVersionUID = 1L;
