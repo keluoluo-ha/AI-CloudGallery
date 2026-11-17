@@ -24,6 +24,22 @@ public class URLPictureUploadResouseImpl extends PictureUploadResouse {
             "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"
     );
 
+    /**
+     * 普通 URL 上传体积上限：2MB
+     */
+    private static final long DEFAULT_MAX_SIZE = 2 * 1024 * 1024L;
+
+    /**
+     * AI 产物体积上限：10MB
+     * AI 输出高清图可能超过普通限制，这里单独放宽
+     */
+    private static final long AI_MAX_SIZE = 10 * 1024 * 1024L;
+
+    /**
+     * 体积上限标识，标记本次是否走 AI 宽松策略
+     */
+    public static final String UPLOAD_FLAG_AI = "ai";
+
     @Override
     public String getOriginalFilename(Object inputResourse) {
         String url = (String) inputResourse;
@@ -60,6 +76,16 @@ public class URLPictureUploadResouseImpl extends PictureUploadResouse {
 
     @Override
     public void validPicture(Object inputResourse) {
+        validPicture(inputResourse, false);
+    }
+
+    /**
+     * 校验 URL 图片
+     *
+     * @param inputResourse 图片地址
+     * @param looseSize     是否放宽体积限制（AI 产物走这个）
+     */
+    public void validPicture(Object inputResourse, boolean looseSize) {
         String fileurl = (String) inputResourse;
         ThrowUtils.throwIf(StrUtil.isBlank(fileurl), ErrorCode.PARAMS_ERROR, "图片地址不能为空");
         try {
@@ -94,8 +120,9 @@ public class URLPictureUploadResouseImpl extends PictureUploadResouse {
             String contentLength = response.header(Header.CONTENT_LENGTH);
             if (StrUtil.isNotBlank(contentLength)) {
                 long length = Long.parseLong(contentLength);
-                final long maxSize = 2 * 1024 * 1024L;
-                ThrowUtils.throwIf(length > maxSize, ErrorCode.PARAMS_ERROR, "文件大小不能超过 2MB");
+                final long maxSize = looseSize ? AI_MAX_SIZE : DEFAULT_MAX_SIZE;
+                ThrowUtils.throwIf(length > maxSize,
+                        ErrorCode.PARAMS_ERROR, "文件大小不能超过 " + (maxSize / 1024 / 1024) + "MB");
             }
         } catch (NumberFormatException e) {
             // Content-Length 解析失败时忽略，下载阶段再校验
