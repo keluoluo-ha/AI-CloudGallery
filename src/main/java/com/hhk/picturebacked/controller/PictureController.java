@@ -34,7 +34,9 @@ import com.hhk.picturebacked.model.entity.Space;
 import com.hhk.picturebacked.model.entity.User;
 import com.hhk.picturebacked.model.enums.PictureReviewStatusEnum;
 import com.hhk.picturebacked.model.vo.PictureVO;
+import com.hhk.picturebacked.model.vo.PictureViewRankVO;
 import com.hhk.picturebacked.service.PictureService;
+import com.hhk.picturebacked.service.PictureViewService;
 import com.hhk.picturebacked.service.SpaceService;
 import com.hhk.picturebacked.service.UserService;
 import lombok.extern.slf4j.Slf4j;
@@ -77,6 +79,8 @@ public class PictureController {
 
     @Resource
     private AliYunAiApi aliYunAiApi;
+    @Resource
+    private PictureViewService pictureViewService;
     //构造本地缓存
     private final Cache<String, String> LOCAL_CACHE =
             Caffeine.newBuilder().initialCapacity(1024)
@@ -216,6 +220,39 @@ public class PictureController {
         pictureVO.setPermissionList(permissionList);
         // 获取封装类
         return ResultUtils.success(pictureVO);
+    }
+
+    /**
+     * 上报图片浏览量
+     * 流程：Redis SETNX 防刷（1 小时内同一用户同一图片只计一次）-> 发一条 MQ 消息 -> 立即返回
+     * 这里不更新数据库，浏览量由消费者计数到 Redis，再由定时任务批量刷回 MySQL
+     */
+    @PostMapping("/view/{pictureId}")
+    public BaseResponse<Boolean> reportPictureView(@PathVariable long pictureId, HttpServletRequest request) {
+        ThrowUtils.throwIf(pictureId <= 0, ErrorCode.PARAMS_ERROR);
+        // 取当前登录用户；未登录时用 IP 做兜底标识，同样能起到防刷作用
+        Long userId = 0L;
+        try {
+            User loginUser = userService.getLoginUser(request);
+            if (loginUser != null && loginUser.getId() != null) {
+                userId = loginUser.getId();
+            }
+        } catch (Exception e) {
+            // 未登录：退化成 IP 维度的防刷
+            userId = Math.abs((long) String.valueOf(request.getRemoteAddr()).hashCode());
+        }
+        pictureViewService.reportView(pictureId, userId);
+        return ResultUtils.success(true);
+    }
+
+    /**
+     * 周浏览量 TOP10（暂时只提供接口，前端暂未接入）
+     * 直接读 Redis 计数 key 排序返回，不做多日合并、不缓存、不做冷启动降级
+     */
+    @GetMapping("/rank/weekly")
+    public BaseResponse<List<PictureViewRankVO>> getWeeklyViewRank() {
+        List<PictureViewRankVO> rank = pictureViewService.getWeeklyRank(10);
+        return ResultUtils.success(rank);
     }
 
     /**
