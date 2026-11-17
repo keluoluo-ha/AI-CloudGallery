@@ -11,20 +11,27 @@ import com.hhk.picturebacked.exception.ThrowUtils;
 import com.hhk.picturebacked.mapper.SpaceMapper;
 import com.hhk.picturebacked.model.dto.space.Analyze.*;
 import com.hhk.picturebacked.model.entity.Picture;
+import com.hhk.picturebacked.model.entity.Product;
 import com.hhk.picturebacked.model.entity.Space;
 import com.hhk.picturebacked.model.entity.User;
+import com.hhk.picturebacked.model.enums.AssetTypeEnum;
+import com.hhk.picturebacked.model.enums.PlatformAssetRuleEnum;
 import com.hhk.picturebacked.model.vo.spaceAnalyze.*;
 import com.hhk.picturebacked.service.PictureService;
+import com.hhk.picturebacked.service.ProductService;
 import com.hhk.picturebacked.service.SpaceAnalyzeService;
 import com.hhk.picturebacked.service.SpaceService;
 import com.hhk.picturebacked.service.UserService;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -44,6 +51,9 @@ public class SpaceAnalyzeServiceImpl extends ServiceImpl<SpaceMapper, Space>
 
     @Resource
     public PictureService pictureService;
+
+    @Resource
+    public ProductService productService;
 
     @Override
     public SpaceUsageAnalyzeResponse SpaceAnalyzeUsage(SpaceUsageAnalyzeRequest spaceUsageAnalyzeRequest, User loginUser) {
@@ -228,7 +238,6 @@ public class SpaceAnalyzeServiceImpl extends ServiceImpl<SpaceMapper, Space>
     @Override
     public List<Space> getSpaceRankAnalyze(SpaceRankAnalyzeRequest spaceRankAnalyzeRequest, User loginUser) {
         ThrowUtils.throwIf(spaceRankAnalyzeRequest == null, ErrorCode.PARAMS_ERROR);
-
 // 仅管理员可查看空间排行
         ThrowUtils.throwIf(!userService.isAdmin(loginUser), ErrorCode.NO_AUTH_ERROR, "无权查看空间排行");
 
@@ -240,6 +249,123 @@ public class SpaceAnalyzeServiceImpl extends ServiceImpl<SpaceMapper, Space>
 
 // 查询结果
         return spaceService.list(queryWrapper);
+    }
+
+    /**
+     * 素材覆盖率分析
+     * <p>
+     * 按平台维度统计「SKU 素材齐备率」：某个 SKU 在某平台上，
+     * 当该平台要求的素材类型都具备时，记为已齐备。
+     * </p>
+     */
+    @Override
+    public List<SpaceCoverageAnalyzeResponse> getSpaceCoverageAnalyze(SpaceCoverageAnalyzeRequest request, User loginUser) {
+        ThrowUtils.throwIf(request == null, ErrorCode.PARAMS_ERROR);
+        checkAnalyzeAuth(request, loginUser);
+        // 公共图库/全部空间不支持 SKU 维度分析（SKU 归属具体店铺）
+        ThrowUtils.throwIf(request.isQueryAll() || request.isQueryPublic(),
+                ErrorCode.PARAMS_ERROR, "素材覆盖率分析仅支持指定店铺");
+        Long spaceId = request.getSpaceId();
+        ThrowUtils.throwIf(spaceId == null, ErrorCode.PARAMS_ERROR, "请指定店铺");
+
+        // 1. 查出店铺下所有 SKU
+        List<Product> productList = productService.lambdaQuery()
+                .eq(Product::getSpaceId, spaceId)
+                .list();
+        if (productList.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 2. 查出店铺下所有带平台与素材类型的素材
+        // 注意：picture 按 spaceId 动态分表，必须带 spaceId
+        QueryWrapper<Picture> pictureQueryWrapper = new QueryWrapper<>();
+        pictureQueryWrapper.select("productId", "platform", "assetType")
+                .eq("spaceId", spaceId)
+                .isNotNull("productId")
+                .isNotNull("platform")
+                .isNotNull("assetType");
+        List<Picture> pictureList = pictureService.getBaseMapper().selectList(pictureQueryWrapper);
+
+        // 3. 构造「平台 + SKU + 素材类型」已具备的集合
+        Set<String> ownedSet = pictureList.stream()
+                .map(p -> p.getPlatform() + "#" + p.getProductId() + "#" + p.getAssetType())
+                .collect(Collectors.toSet());
+
+        // 4. 逐平台统计
+        List<SpaceCoverageAnalyzeResponse> result = new ArrayList<>();
+        for (PlatformAssetRuleEnum rule : PlatformAssetRuleEnum.allRules()) {
+            long skuCount = productList.size();
+            long coveredCount = 0;
+            for (Product product : productList) {
+                boolean covered = rule.getRequiredAssetTypes().stream()
+                        .allMatch(assetType -> ownedSet.contains(
+                                rule.getPlatform() + "#" + product.getId() + "#" + assetType.getValue()));
+                if (covered) {
+                    coveredCount++;
+                }
+            }
+            long missingCount = skuCount - coveredCount;
+            double coverageRate = skuCount == 0 ? 0
+                    : NumberUtil.round(coveredCount * 100.0 / skuCount, 2).doubleValue();
+            result.add(new SpaceCoverageAnalyzeResponse(
+                    rule.getPlatform(), rule.getPlatformName(),
+                    skuCount, coveredCount, missingCount, coverageRate));
+        }
+        return result;
+    }
+
+    /**
+     * 素材缺口分析
+     * <p>
+     * 按平台维度列出缺失的 SKU 明细，前端可直接触发 AI 生成补图。
+     * </p>
+     */
+    @Override
+    public List<SpaceMissingAnalyzeResponse> getSpaceMissingAnalyze(SpaceMissingAnalyzeRequest request, User loginUser) {
+        ThrowUtils.throwIf(request == null, ErrorCode.PARAMS_ERROR);
+        checkAnalyzeAuth(request, loginUser);
+        ThrowUtils.throwIf(request.isQueryAll() || request.isQueryPublic(),
+                ErrorCode.PARAMS_ERROR, "素材缺口分析仅支持指定店铺");
+        Long spaceId = request.getSpaceId();
+        ThrowUtils.throwIf(spaceId == null, ErrorCode.PARAMS_ERROR, "请指定店铺");
+
+        // 1. 查出店铺下所有 SKU
+        List<Product> productList = productService.lambdaQuery()
+                .eq(Product::getSpaceId, spaceId)
+                .list();
+        if (productList.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 2. 查出已具备的平台 + SKU + 素材类型组合
+        QueryWrapper<Picture> pictureQueryWrapper = new QueryWrapper<>();
+        pictureQueryWrapper.select("productId", "platform", "assetType")
+                .eq("spaceId", spaceId)
+                .isNotNull("productId")
+                .isNotNull("platform")
+                .isNotNull("assetType");
+        List<Picture> pictureList = pictureService.getBaseMapper().selectList(pictureQueryWrapper);
+        Set<String> ownedSet = pictureList.stream()
+                .map(p -> p.getPlatform() + "#" + p.getProductId() + "#" + p.getAssetType())
+                .collect(Collectors.toSet());
+
+        // 3. 逐平台逐 SKU 找缺口
+        List<SpaceMissingAnalyzeResponse> result = new ArrayList<>();
+        for (PlatformAssetRuleEnum rule : PlatformAssetRuleEnum.allRules()) {
+            for (Product product : productList) {
+                for (AssetTypeEnum assetType : rule.getRequiredAssetTypes()) {
+                    boolean owned = ownedSet.contains(
+                            rule.getPlatform() + "#" + product.getId() + "#" + assetType.getValue());
+                    if (!owned) {
+                        result.add(new SpaceMissingAnalyzeResponse(
+                                rule.getPlatform(), rule.getPlatformName(),
+                                assetType.getValue(), assetType.getText(),
+                                product.getId(), product.getSku(), product.getTitle()));
+                    }
+                }
+            }
+        }
+        return result;
     }
 
 

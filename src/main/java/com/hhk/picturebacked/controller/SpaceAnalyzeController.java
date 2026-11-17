@@ -94,6 +94,32 @@ public class SpaceAnalyzeController {
         return ResultUtils.success(resultList);
     }
 
+    /**
+     * 素材覆盖率分析（按平台统计 SKU 素材齐备率）
+     * @param spaceCoverageAnalyzeRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/coverage")
+    public BaseResponse<List<SpaceCoverageAnalyzeResponse>> getSpaceCoverageAnalyze(@RequestBody SpaceCoverageAnalyzeRequest spaceCoverageAnalyzeRequest, HttpServletRequest request) {
+        ThrowUtils.throwIf(spaceCoverageAnalyzeRequest == null, ErrorCode.PARAMS_ERROR);
+        User loginUser = userService.getLoginUser(request);
+        List<SpaceCoverageAnalyzeResponse> resultList = spaceAnalyzeService.getSpaceCoverageAnalyze(spaceCoverageAnalyzeRequest, loginUser);
+        return ResultUtils.success(resultList);
+    }
 
+    /**
+     * 素材缺口分析（按平台列出缺失素材的 SKU 明细）
+     * @param spaceMissingAnalyzeRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/missing")
+    public BaseResponse<List<SpaceMissingAnalyzeResponse>> getSpaceMissingAnalyze(@RequestBody SpaceMissingAnalyzeRequest spaceMissingAnalyzeRequest, HttpServletRequest request) {
+        ThrowUtils.throwIf(spaceMissingAnalyzeRequest == null, ErrorCode.PARAMS_ERROR);
+        User loginUser = userService.getLoginUser(request);
+        List<SpaceMissingAnalyzeResponse> resultList = spaceAnalyzeService.getSpaceMissingAnalyze(spaceMissingAnalyzeRequest, loginUser);
+        return ResultUtils.success(resultList);
+    }
 
 }

@@ -63,4 +63,24 @@ public interface SpaceAnalyzeService extends IService<Space> {
      * @return
      */
     List<Space> getSpaceRankAnalyze(SpaceRankAnalyzeRequest spaceRankAnalyzeRequest, User loginUser);
+
+    /**
+     * 素材覆盖率分析
+     * 按平台维度统计 SKU 素材齐备率
+     *
+     * @param request 分析请求
+     * @param loginUser 登录用户
+     * @return 各平台覆盖率
+     */
+    List<SpaceCoverageAnalyzeResponse> getSpaceCoverageAnalyze(SpaceCoverageAnalyzeRequest request, User loginUser);
+
+    /**
+     * 素材缺口分析
+     * 按平台维度列出缺失素材的 SKU 明细
+     *
+     * @param request 分析请求
+     * @param loginUser 登录用户
+     * @return 缺口明细
+     */
+    List<SpaceMissingAnalyzeResponse> getSpaceMissingAnalyze(SpaceMissingAnalyzeRequest request, User loginUser);
 }
